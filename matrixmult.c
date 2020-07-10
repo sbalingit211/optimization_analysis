@@ -1,70 +1,73 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/time.h>
 
 int main() {
-        int n = 3;              //size of matrices
+        struct timeval start,stop;
+        gettimeofday( &start, NULL );
+        gettimeofday( &stop, NULL );
+
+        int n = 710;              //size of matrices
         int m1[n][n];
         int m2[n][n];
         int result[n][n];
         int i, j, k;            //vars for indexes
-        FILE *file1, *file2;
+        FILE *file;
         int temp[n*n];
 
         //fill matrix1
-        file1 = fopen ( "matrix", "r"); //read in file
+        file = fopen ( "matrix", "r");  //read in file
 
         //exit if opening file fails
-        if ( file1 == NULL ) { 
+        if ( file == NULL ) {
                 printf( "Error opening file.\n" );
                 exit (0);
-        }   
+        }
 
         i=0;
-        while ( !feof (file1) ) { 
-                fscanf( file1, "%d", &temp[i] );
+        while ( !feof (file) ) {
+                fscanf( file, "%d", &temp[i] );
                 i++;
-        }   
-
+        }
 
         //close file
-        fclose(file1);
+        fclose(file);
 
         //enter values into matrix
         k = 0;
-        for ( i=0; i<n; i++ ) { 
-                for ( j=0; j<n; j++ ) { 
+        for ( i=0; i<n; i++ ) {
+                for ( j=0; j<n; j++ ) {
                         m1[i][j] = temp[k];
                         k++;
-                }   
-        }   
+                }
+        }
 
         //fill matrix2
-        file2 = fopen ( "matrix2", "r");        //read in file
+        file = fopen ( "matrix2", "r"); //read in file
 
         //exit if opening file fails
-        if ( file2 == NULL ) { 
+        if ( file == NULL ) {
                 printf( "Error opening file.\n" );
                 exit (0);
-        }   
-
+        }
         i=0;
-        while ( !feof (file2) ) { 
-                fscanf( file2, "%d", &temp[i] );
+        while ( !feof (file) ) {
+                fscanf( file, "%d", &temp[i] );
                 i++;
-        }   
+        }
 
         //close file
-        fclose(file2);
-
+        fclose(file);
 
         //enter values into matrix
         k = 0;
-        for ( i=0; i<n; i++ ) { 
-                for ( j=0; j<n; j++ ) { 
+        for ( i=0; i<n; i++ ) {
+                for ( j=0; j<n; j++ ) {
                         m2[i][j] = temp[k];
                         k++;
                 }
         }
+/*
         //print matrices
         printf("matrix1:\n");
         for ( i=0; i<n; i++ ) {
@@ -81,6 +84,14 @@ int main() {
                 }
                 printf("\n");
         }
+*/
+        file = fopen ( "results", "w"); //read in file
+
+        //exit if opening file fails
+        if ( file == NULL ) {
+                printf( "Error opening file.\n" );
+                exit (0);
+        }
 
         //multiply matrices
         for ( i=0; i<n; i++ ) {
@@ -89,17 +100,21 @@ int main() {
                         for ( k=0; k<n; k++ ) {
                                 result[i][j] += m1[i][k] * m2[k][j];
                         }
+                                fprintf(file, "%d ", result[i][j]);
                 }
+                fprintf(file, "\n");
         }
 
-        printf("results:\n");
-        for ( i=0; i<n; i++ ) {
-                for ( j=0; j<n; j++ ) {
-                        printf("%d\t", result[i][j]);
-                }
-                printf("\n");
-        }
+        fclose(file);
+/*
+        printf("stop.tv_sec = %ld\n", stop.tv_sec);
+        printf("start.tv_sec = %ld\n", start.tv_sec);
+        printf("stop.tv_usec = %d\n", stop.tv_usec);
+        printf("stop.tv_usec = %d\n", start.tv_usec);
+        //store results in to file
+*/
+        printf("%lf seconds elaps.\n",
+                ((stop.tv_sec - start.tv_sec) + (stop.tv_usec - start.tv_usec)/1000000.0 ));
         return 0;
 }
- 
 

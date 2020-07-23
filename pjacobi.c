@@ -44,10 +44,9 @@ enum {
 };
 
 struct PerfFreqInfo {
-	double mperf_freq;
-	double mperf_delta;
-	double aperf_freq;
-	double aperf_delta;
+	double mperf;
+	double aperf;
+	double thread_freq;
 };
 
 static double elapsed_delta=0.0, elapsed_calc=0.0;
@@ -393,9 +392,11 @@ void setMsrInfo( uint32_t num_threads, struct msr_batch_array *batch) {
 void calculatePerf( uint32_t num_threads, struct msr_batch_op start_op[], struct msr_batch_op end_op[], struct PerfFreqInfo perf_freq_info[] ) {
         uint32_t i;
 
+	//frequency in GHz = 1000000000 cycles per second
         for( i=0; i < (num_threads*2); i+=2 ) {
-                perf_freq_info[i/2].mperf_delta = ( end_op[i].msrdata - start_op[i].msrdata ) / elapsed_delta / 1000000000.0;
-                perf_freq_info[i/2].aperf_delta = ( end_op[i+1].msrdata - start_op[i+1].msrdata ) / elapsed_delta / 1000000000.0;
+                perf_freq_info[i/2].mperf = ( end_op[i].msrdata - start_op[i].msrdata ) / elapsed_delta / 1000000000.0;
+                perf_freq_info[i/2].aperf = ( end_op[i+1].msrdata - start_op[i+1].msrdata ) / elapsed_delta / 1000000000.0;
+		perf_freq_info[i/2].thread_freq = 2.6 * (perf_freq_info[i/2].aperf / perf_freq_info[i/2].mperf );
         }
 }
 
@@ -421,7 +422,7 @@ void printPerf( uint32_t num_threads, struct PerfFreqInfo perf_freq_info[] ) {
         uint32_t i;
 
         for( i=0; i<num_threads; i++ ) {
-                printf( "THREAD: %2d \t MPERF FREQ: %.4lf \t APERF FREQ: %.4lf \n", i,  perf_freq_info[i].mperf_delta, perf_freq_info[i].aperf_delta );
+               printf( "THREAD: %2d \t MPERF: %.4lf \t APERF: %.4lf \t FREQ: %.4lf \n", i,  perf_freq_info[i].mperf, perf_freq_info[i].aperf, perf_freq_info[i].thread_freq );
         }
         printf( "\n" );
 }

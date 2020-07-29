@@ -33,6 +33,7 @@
 #define N (2000ULL)
 #define NUMGRIDS (2ULL)
 #define NUM_THREADS_INDEX 1
+#define CPU_FREQ 2.6
 
 double grid[NUMGRIDS][N][N];
 static uint64_t total_columns;
@@ -43,12 +44,14 @@ enum {
   NUM_BARRIERS = 2
 };
 
+//struct PerfFreqInfo: holds thread's mperf, aperf, and frequency info
 struct PerfFreqInfo {
 	double mperf;
 	double aperf;
 	double thread_freq;
 };
 
+//the following are global to share values across all threads
 static double elapsed_delta=0.0, elapsed_calc=0.0;
 static double delta=0.0;
 
@@ -68,62 +71,91 @@ double calculateDelta();
 
 void* threadLoop( void *thread_num );
 
-void setMsrInfo( uint32_t num_threads, struct msr_batch_array *batch);
+void getPerfInfo( uint32_t num_threads, struct msr_batch_array *batch);
 
 void calculatePerf( uint32_t num_threads, struct msr_batch_op start_op[], struct msr_batch_op end_op[], struct PerfFreqInfo perf_freq_info[] );
 
-void printMsrInfo( uint32_t num_threads, struct msr_batch_op start_op[], struct msr_batch_op end_op[] );
+void setCtlMsr( uint32_t num_threads, struct msr_batch_array *batch );
 
-void printPerf( uint32_t num_threads, struct PerfFreqInfo perf_freq_info[] );
+void getPerfStatus( uint32_t num_threads, struct msr_batch_array *batch );
+
+void printPerfCtl( uint32_t num_threads, struct msr_batch_op perf_ctl_op[] );
+void printPerfInfo( uint32_t num_threads, struct msr_batch_op start_op[], struct msr_batch_op end_op[] );
+
+void printPerfStatus( uint32_t num_threads, struct msr_batch_op perf_status_op[] );
+
+void printFreq( uint32_t num_threads, struct PerfFreqInfo perf_freq_info[] );
 
 /**********************************************************************
 ************************         MAIN           ***********************
 **********************************************************************/
-//int main() {
+
 int main( int argc, char *argv[] ) {
-        uint64_t t;
+        uint64_t t;	//for thread ID
+
+	//get total threads user identifies to use
 	uint32_t num_threads;
 	num_threads = atoi( argv[ NUM_THREADS_INDEX ] );
-        struct msr_batch_array batch_start, batch_end;
-        struct msr_batch_op start_op[ num_threads*2 ], end_op[ num_threads*2 ];
-        total_columns = ceil( N / ( double ) num_threads );
-        pthread_t threads[ num_threads ];
+
+	//initializations needed to identify frequency and voltage info
+        struct msr_batch_array batch_freq, batch_operating_point;
+        struct msr_batch_op perf_ctl_op[ num_threads ], start_op[ num_threads*2 ], end_op[ num_threads*2 ], perf_status_op[ num_threads ];
 	struct PerfFreqInfo perf_freq_info[ num_threads ];
 
-        batch_start.numops = num_threads * 2;
-        batch_end.numops = num_threads * 2;
+	//initialize sizes of batches for freq and voltage
+        batch_freq.numops = num_threads * 2;
+	batch_operating_point.numops = num_threads;
+	
+	//calculate how many columns each thread will calculate
+        total_columns = ceil( N / ( double ) num_threads );
+        pthread_t threads[ num_threads ];
 
-        batch_start.ops = start_op;
-        setMsrInfo( num_threads, &batch_start );
+	//get voltage CPU is currently at before calculation
+	batch_operating_point.ops = perf_ctl_op;
+	setCtlMsr( num_threads, &batch_operating_point );
 
+	//get frequency CPU is currently at before calculation
+        batch_freq.ops = start_op;
+        getPerfInfo( num_threads, &batch_freq );
+
+	//initialize barrier for pthread work
         for( t=0; t<NUM_BARRIERS; t++ ) {
                 assert( ! pthread_barrier_init( &barrier[t], NULL, num_threads ) );
         }
 
+	//create threads and disperse to have them each complete their set of calculations
         for( t=0; t<num_threads; t++ ) {
-                assert( ! pthread_create( &threads[t], NULL, threadLoop, (void*)t ) );
+	        assert( ! pthread_create( &threads[t], NULL, threadLoop, (void*)t ) );
         }
 
-	batch_end.ops = end_op;
-        setMsrInfo( num_threads, &batch_end );
+	//read frequency CPU is currently at after calculation
+	batch_freq.ops = end_op;
+        getPerfInfo( num_threads, &batch_freq );
 
+	//read voltage CPU is currently at after calculation
+	batch_operating_point.ops = perf_status_op;
+	getPerfStatus( num_threads, &batch_operating_point );
+
+	//bring pthreads back together
         for( t=0; t<num_threads; t++ ) {
                 pthread_join( threads[t], NULL );
         }
 
+	//destroy barrier since pthread work is complete
         for( t=0; t<NUM_BARRIERS; t++ ) {
                 assert( ! pthread_barrier_destroy( &barrier[t] ) );
         }
 
+	//calculate frequency of each thread
         calculatePerf( num_threads, start_op, end_op, perf_freq_info );
 
-
-        printMsrInfo( num_threads, start_op, end_op );
-        printPerf( num_threads, perf_freq_info );
+	//print info of each thread
+        printPerfInfo( num_threads, start_op, end_op );
+        printFreq( num_threads, perf_freq_info );
+	printPerfCtl( num_threads, perf_ctl_op );
+	printPerfStatus( num_threads, perf_status_op );
 
         pthread_exit( NULL );
-
-
 }
 
 /**********************************************************************
@@ -353,8 +385,8 @@ void* threadLoop( void* thread_num ) {
         pthread_exit( NULL );
 }
 
-//function setMsrInfo:
-void setMsrInfo( uint32_t num_threads, struct msr_batch_array *batch) {
+//function getPerfInfo: read MSR 0xE7 register to obtain mperf information and MSR register 0xE8 to obtain aperf information
+void getPerfInfo( uint32_t num_threads, struct msr_batch_array *batch) {
 	uint64_t i, rc;
 	int fd = open( "/dev/cpu/msr_batch", O_RDWR );
 	assert( fd != -1 );
@@ -394,36 +426,102 @@ void calculatePerf( uint32_t num_threads, struct msr_batch_op start_op[], struct
 
 	//frequency in GHz = 1000000000 cycles per second
         for( i=0; i < (num_threads*2); i+=2 ) {
-                perf_freq_info[i/2].mperf = ( end_op[i].msrdata - start_op[i].msrdata ) / elapsed_delta / 1000000000.0;
-                perf_freq_info[i/2].aperf = ( end_op[i+1].msrdata - start_op[i+1].msrdata ) / elapsed_delta / 1000000000.0;
-		perf_freq_info[i/2].thread_freq = 2.6 * (perf_freq_info[i/2].aperf / perf_freq_info[i/2].mperf );
+                perf_freq_info[i/2].mperf = ( end_op[i].msrdata - start_op[i].msrdata );
+                perf_freq_info[i/2].aperf = ( end_op[i+1].msrdata - start_op[i+1].msrdata );
+		perf_freq_info[i/2].thread_freq = CPU_FREQ * (perf_freq_info[i/2].aperf / perf_freq_info[i/2].mperf );
         }
 }
 
-//function printMsrInfo: print msr information to terminal
-void printMsrInfo( uint32_t num_threads, struct msr_batch_op start_op[], struct msr_batch_op end_op[] ) {
+//function setCtlMsr: write to PERF_CTL MSR to indicate target frequency and voltage operating point
+void setCtlMsr( uint32_t num_threads, struct msr_batch_array *batch ) {
+
+	uint64_t i, rc;
+	int fd = open( "/dev/cpu/msr_batch", O_RDWR );
+	assert( fd != -1 );
+
+  for ( i = 0; i<num_threads ; i++ ) {
+
+    batch->ops[i].cpu = i;
+    batch->ops[i].isrdmsr = 1;
+    batch->ops[i].err = 0;
+    batch->ops[i].msr = 0x199;
+    batch->ops[i].msrdata = 0;
+    batch->ops[i].wmask = 0x000000000000ff00;
+
+  }
+
+	rc = ioctl( fd, X86_IOC_MSR_BATCH, batch );
+	assert( rc != -1 );
+	close( fd );
+}
+
+//function getPerfStatus: read current frequency and voltage operating point
+void getPerfStatus( uint32_t num_threads, struct msr_batch_array *batch ) {
+
+	uint64_t i, rc;
+	int fd = open( "/dev/cpu/msr_batch", O_RDWR );
+	assert( fd != -1 );
+
+  for (i = 0; i<num_threads ; i++ ) {
+
+    batch->ops[i].cpu = i;
+    batch->ops[i].isrdmsr = 1;
+    batch->ops[i].err = 0;
+    batch->ops[i].msr = 0x198;
+    batch->ops[i].msrdata = 0;
+    batch->ops[i].wmask = 0;
+
+  }
+
+	rc = ioctl( fd, X86_IOC_MSR_BATCH, batch );
+	assert( rc != -1 );
+	close( fd );
+}
+
+//function printPerfInfo: print msr information to terminal
+void printPerfInfo( uint32_t num_threads, struct msr_batch_op start_op[], struct msr_batch_op end_op[] ) {
         uint32_t i;
 
 	//print mperf data
         for( i=0; i < (num_threads*2); i+=2 ) {
-                printf( "THREAD: %2d \t MPERF: START: %" PRIu64 "\t END: %" PRIu64 "\t DELTA: %" PRIu64 " \n", i/2, (uint64_t)start_op[i].msrdata, (uint64_t)end_op[i].msrdata, (uint64_t) end_op[i].msrdata - (uint64_t)start_op[i].msrdata );
+                printf( "THREAD: %2d \t MPERF: START: %" PRIu64 "\t END: %" PRIu64 "\t DELTA: %" PRIu64 " \n", i/2, (uint64_t)start_op[i].msrdata, (uint64_t)end_op[i].msrdata, (uint64_t) end_op[i].msrdata - (uint64_t) start_op[i].msrdata );
 	}
 	printf( "\n\n" );
 
 	//print aperf data
         for( i=0; i < (num_threads*2); i+=2 ) {
-                printf( "THREAD: %2d \t APERF: START: %" PRIu64 "\t END: %" PRIu64 "\t DELTA: %" PRIu64 " \n", i/2, (uint64_t)start_op[i+1].msrdata, (uint64_t)end_op[i+1].msrdata, (uint64_t) end_op[i+1].msrdata - (uint64_t)start_op[i+1].msrdata );
+                printf( "THREAD: %2d \t APERF: START: %" PRIu64 "\t END: %" PRIu64 "\t DELTA: %" PRIu64 " \n", i/2, (uint64_t)start_op[i+1].msrdata, (uint64_t)end_op[i+1].msrdata, (uint64_t) end_op[i+1].msrdata - (uint64_t) start_op[i+1].msrdata );
         }
         printf("\n");
 }
 
-//function printPerf: print mperf and aperf information to terminal
-void printPerf( uint32_t num_threads, struct PerfFreqInfo perf_freq_info[] ) {
+//function printFreq: print mperf and aperf information to terminal
+void printFreq( uint32_t num_threads, struct PerfFreqInfo perf_freq_info[] ) {
         uint32_t i;
 
         for( i=0; i<num_threads; i++ ) {
                printf( "THREAD: %2d \t MPERF: %.4lf \t APERF: %.4lf \t FREQ: %.4lf \n", i,  perf_freq_info[i].mperf, perf_freq_info[i].aperf, perf_freq_info[i].thread_freq );
         }
         printf( "\n" );
+}
+
+//function printPerfCtl: print last targeted operating point before calculations
+void printPerfCtl( uint32_t num_threads, struct msr_batch_op perf_ctl_op[] ) {
+	uint32_t i;
+
+	for( i=0; i<num_threads; i++ ) {
+		printf( "THREAD: %2d \t LAST OPERATING PT: %" PRIu64 " \n", i, (uint64_t)perf_ctl_op[i].msrdata );
+	}
+	printf("\n");
+}
+
+//function printPerfCtl: print last targeted operating point before calculations
+void printPerfStatus( uint32_t num_threads, struct msr_batch_op perf_status_op[] ) {
+	uint32_t i;
+
+	for( i=0; i<num_threads; i++ ) {
+		printf( "THREAD: %2d \t CURRENT OPERATING PT: %" PRIu64 " \n", i, ( 0xffff & (uint64_t)perf_status_op[i].msrdata ) >> 8 );
+	}
+	printf("\n");
 }
 

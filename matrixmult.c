@@ -4,10 +4,8 @@
 
 int main() {
         struct timeval start,stop;
-        gettimeofday( &start, NULL );
-        gettimeofday( &stop, NULL );
 
-        int n = 710;              //size of matrices
+        int n = 700;              //size of matrices
         int m1[n][n];
         int m2[n][n];
         int result[n][n];
@@ -93,6 +91,7 @@ int main() {
                 exit (0);
         }
 
+        gettimeofday( &start, NULL );
         //multiply matrices
         for ( i=0; i<n; i++ ) {
                 for ( j=0; j<n; j++ ) {
@@ -104,6 +103,7 @@ int main() {
                 }
                 fprintf(file, "\n");
         }
+        gettimeofday( &stop, NULL );
 
         fclose(file);
 /*
@@ -113,7 +113,7 @@ int main() {
         printf("stop.tv_usec = %d\n", start.tv_usec);
         //store results in to file
 */
-        printf("%lf seconds elaps.\n",
+        printf("For a naive algorithm for dense matrix multiplication on a two 700x700 matrices, %lf seconds elapsed.\n",
                 ((stop.tv_sec - start.tv_sec) + (stop.tv_usec - start.tv_usec)/1000000.0 ));
         return 0;
 }
